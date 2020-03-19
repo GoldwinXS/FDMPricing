@@ -1,7 +1,7 @@
 import tkinter as tk
 import os
 from ProjectUtils import hollow_estimate, material_prices
-
+import pandas as pd
 
 
 class App:
@@ -10,21 +10,8 @@ class App:
     def __init__(self):
 
         """ Main Application class """
-
-        self.names = []
-        self.infills = []
-        self.infill_variables = []
-        self.materials = []
-        self.material_variables = []
-        self.thicknesses = []
-        self.thickness_variables = []
-        self.quantities = []
-        self.quantities_variables = []
-        self.file_names = []
-        # self.c = []
-        self.drop_down_variables = []
-
-        self.requests = [] # A list of lists which holds the information for one line
+        self.set_app_dict()
+        self.set_query_dict()
 
         self.root = tk.Tk()
         self.root.wm_title("FDM QUOTING SOFTWARE V 2.2.7")
@@ -33,97 +20,73 @@ class App:
         # Submit button
         self.submit_button = tk.Button(self.root, text="Submit")
         self.submit_button.bind("<Button-1>", self.create_window)
-        # self.submit_button.pack(side='left',expand=True)
         self.submit_button.grid(row=0, column=0, sticky=tk.E + tk.W)
 
         # Path Entry
         self.path_field = tk.Entry(self.root)
-        # self.path_field.pack(side='right',expand=True)
-        self.path_field.grid(row=0, column=1, sticky=tk.E+tk.W+tk.N+tk.S)
-        self.root.resizable(True,True)
+        self.path_field.grid(row=0, column=1, sticky=tk.E + tk.W + tk.N + tk.S)
+        self.root.resizable(True, True)
         self.root.mainloop()
 
-    def price_sorter(self, list, request_list):
+    def set_query_dict(self):
+        """ simple function to reset the query dict which contains all of the needed info for part pricing"""
+        self.query_dict = {"mesh": [],
+                           "path":[],
+                           "quantities_variables": [],
+                           "drop_down_variables": [],
+                           "infills": [],
+                           "thicknesses": [],
+                           "material": []}
+
+    def set_app_dict(self):
+        """ will reset the app data dict, which has all of the GUI variables """
+        self.app_data = {
+            "names": [],
+            "infills": [],
+            "infill_variables": [],
+            "materials": [],
+            "material_variables": [],
+            "thicknesses": [],
+            "thickness_variables": [],
+            "quantities": [],
+            "quantities_variables": [],
+            "file_names": [],
+            "mesh": [],
+            "drop_down_variables": [],
+        }
+
+    def price_sorter(self, build_dict, query_dict):
+        """ this function converts the build requirements per material to price per part"""
+        query_df = pd.DataFrame(query_dict)
+        build_df = pd.DataFrame(build_dict)
+        n_parts = query_df.shape[0]
+
+        query_df['part_unit_price'] = [0]*n_parts
+
+        for material in query_df['material']:
+            parts_in_mat_df = query_df[query_df['material']==material]
+            build_mat_df = build_df[build_df['material']==material]
+
+            parts_in_mat_df['part_unit_vol'] = [hollow_estimate(m,t,i) for m,t,i in zip(parts_in_mat_df['mesh'],parts_in_mat_df['thicknesses'],parts_in_mat_df['infills'])]
+            total_vol = sum(parts_in_mat_df['part_unit_vol']*list(map(int,parts_in_mat_df['quantities_variables'])))
+            parts_in_mat_df['part_contrib_to_total_vol'] = [(part_vol*qty)/total_vol for part_vol,qty in zip(parts_in_mat_df['part_unit_vol'],list(map(int,parts_in_mat_df['quantities_variables'])))]
+            query_df['part_unit_price'] = parts_in_mat_df['part_contrib_to_total_vol']*build_mat_df['total_price'].values
+
+        return {x:str(round(price,2)) for x in range(n_parts) for price in query_df['part_unit_price']}
 
 
-        final_prices = []
-        mats, paths, qtys, infill, thick = [var[2] for var in request_list], [var[0] for var in
-                                                                              request_list], [var[1] for var
-                                                                                              in
-                                                                                              request_list], [
-                                               var[3] for var in request_list], [var[4] for var in
-                                                                                 request_list]
-
-        for var1 in range(0, len(mats)):
-            for var2 in range(len(paths[var1])):
-                final_prices.append(0)
-
-        for i in range(len(mats)):
-
-            material, price, total_vol = list[i]
-            lower_case_list = [item.lower() for item in self.file_names]
-
-            for j in range(0, len(paths[i])):
-                number_of_parts = float(qtys[i][j])
-                hollow_vol = hollow_estimate(paths[i][j], thick[i][j], infill[i][j])
-                total_hollow_vol = hollow_vol * number_of_parts
-
-                name = paths[i][j]
-
-                left = name.rfind("/")
-                right = name.rfind(".")
-                pathless_name = name[left + 1:right].lower()
-
-                relative_amt = total_hollow_vol / total_vol
-                unit_price = (relative_amt * price) / number_of_parts
-
-                if unit_price < 10:
-                    unit_price = 10
-
-                place = lower_case_list.index(pathless_name + ".stl")
-
-                final_prices[place] = round(unit_price, 2)
-
-        return final_prices
-
-    def combiner(self, list_of_lists):
-        mats = []
-        materials = {}
-
-        final_list = []
-
-        for i in range(len(list_of_lists)):
-            mats.append(list_of_lists[i][2])
-            materials = list(set(mats))
-
-        for j in range(0, len(materials)):
-
-            paths = []
-            qts = []
-            thk = []
-            infs = []
-            mat = [materials[j]]
-            temp_list = []
-
-            for i in range(0, len(list_of_lists)):
-
-                if list_of_lists[i][2] == materials[j]:
-                    paths.append(list_of_lists[i][0])
-                    qts.append(list_of_lists[i][1])
-                    infs.append(list_of_lists[i][3])
-                    thk.append(list_of_lists[i][4])
-
-                    temp_list = [paths, qts, mat, infs, thk]
-
-            final_list.append(temp_list)
-        return final_list
+    def convert_to_list(self, query_dict):
+        df = pd.DataFrame(query_dict)
+        return df.values.tolist()
 
     def report_window(self, g):
+        from stl import mesh
 
         report_window = tk.Toplevel(self.root, bg="white")
 
         report_window.iconbitmap("icon.ico")
         report_window.wm_title("REPORT WINDOW")
+
         materials = []
         quantities = []
         labels = []
@@ -135,30 +98,35 @@ class App:
             labels.append(tk.Label(report_window, text=self.label_text[j], font='Helvetica 18 bold', bg="white"))
             labels[j].grid(column=j, row=0, padx=5, pady=5)
 
-        self.requests = []
-
-        for i in range(0, len(self.file_names)):
-            name = tk.Label(report_window, text=self.file_names[i].rstrip(".stl"), bg="white")
+        self.set_query_dict()
+        for i, file in enumerate(self.file_names):
+            name = tk.Label(report_window, text=file.rstrip(".stl"), bg="white")
             name.grid(column=0, row=i + 1, sticky=tk.W)
 
-            materials.append(self.drop_down_variables[i].get())
+            materials.append(self.app_data['drop_down_variables'][i].get())
             material = tk.Label(report_window, text=materials[i], bg="white")
             material.grid(column=1, row=i + 1)
 
-            quantities.append(self.quantities_variables[i].get())
+            quantities.append(self.app_data['quantities_variables'][i].get())
             quantity = tk.Label(report_window, text=quantities[i], bg="white")
             quantity.grid(column=2, row=i + 1)
 
-            self.requests.append([self.path_field.get() + "/" + self.file_names[i], self.quantities_variables[i].get(),
-                                  self.drop_down_variables[i].get(), self.infills[i].get(), self.thicknesses[i].get()])
-
+            mesh_obj = mesh.Mesh.from_file(self.path_field.get() + "/" + file)
+            mesh_obj.points = mesh_obj.points/100 # convert to inches?
+            self.query_dict['mesh'].append(mesh_obj)
+            self.query_dict['quantities_variables'].append(self.app_data['quantities_variables'][i].get())
+            self.query_dict['drop_down_variables'].append(self.app_data['drop_down_variables'][i].get())
+            self.query_dict['infills'].append(self.app_data['infills'][i].get())
+            self.query_dict['thicknesses'].append(self.app_data['thicknesses'][i].get())
+            self.query_dict['material'].append(self.app_data['drop_down_variables'][i].get())
+            self.query_dict['path'].append(self.path_field.get() + "/" + file)
             copy_button = tk.Button(report_window, text="Copy to Clipboard",
                                     command=lambda x=i: clipboard(x))
             copy_button.grid(column=4, row=i + 1, padx=5, pady=5)
 
-        combined_request = self.combiner(self.requests)
-        final_info = material_prices(combined_request)
-        final_unit_prices = self.price_sorter(final_info, combined_request)
+        # combined_request = self.convert_to_list(self.query_dict)
+        final_info = material_prices(self.query_dict)
+        final_unit_prices = self.price_sorter(final_info, self.query_dict)
 
         for i in range(0, len(self.file_names)):
             price = tk.Label(report_window, text=final_unit_prices[i], bg="white")
@@ -199,9 +167,8 @@ class App:
         self.canvas.create_window((0, 0), window=self.new_window, anchor='nw')
         self.canvas.grid()
 
-
         path = self.path_field.get()
-        file_names = self.file_names = [file for file in os.listdir(path) if file.endswith('.stl')]
+        self.file_names = [file for file in os.listdir(path) if file.endswith('.stl')]
 
         self.new_window.bind("<Configure>", self.AuxscrollFunction)
 
@@ -212,7 +179,7 @@ class App:
         self.scroll_bar.config(command=self.canvas.yview)
         self.canvas['yscrollcommand'] = self.scroll_bar.set
 
-        for index in range(0, len(file_names)):
+        for index in range(len(self.file_names)):
 
             labels = []
 
@@ -220,71 +187,59 @@ class App:
                 labels.append(tk.Label(self.new_window, text=label_text[j], font='Helvetica 18 bold', bg="white"))
                 labels[j].grid(column=j, row=0, padx=5, pady=5)
 
-            self.drop_down_variables.append(tk.StringVar(self.root))
-            self.infill_variables.append(tk.StringVar(self.root))
-            self.material_variables.append(tk.StringVar(self.root))
-            self.thickness_variables.append(tk.StringVar(self.root))
-            self.quantities_variables.append(tk.StringVar(self.root))
+            self.app_data['drop_down_variables'].append(tk.StringVar(self.root))
+            self.app_data['infill_variables'].append(tk.StringVar(self.root))
+            self.app_data['material_variables'].append(tk.StringVar(self.root))
+            self.app_data['thickness_variables'].append(tk.StringVar(self.root))
+            self.app_data['quantities_variables'].append(tk.StringVar(self.root))
 
-            self.name = tk.Label(self.new_window, text=file_names[index].rstrip(".stl"), bg="white")
+            self.name = tk.Label(self.new_window, text=self.file_names[index].rstrip(".stl"), bg="white")
             self.name_labels.append(self.name)
             self.new_window.update()
 
-            self.infills.append(tk.Entry(self.new_window, textvariable=self.infill_variables[index]))
-            self.thicknesses.append(tk.Entry(self.new_window, textvariable=self.thickness_variables[index]))
-            self.materials.append(
-                tk.OptionMenu(self.new_window, self.drop_down_variables[index], "ASA", "PEEK", "PLA", "ABS",
-                              "Ultem 1010",
-                              "Ultem 9085", "Nylon 12",
-                              "Zytel", "PC-ABS"))
-            self.quantities.append(tk.Entry(self.new_window, textvariable=self.quantities_variables[index]))
+            self.app_data['infills'].append(
+                tk.Entry(self.new_window, textvariable=self.app_data['infill_variables'][index]))
+            self.app_data['thicknesses'].append(
+                tk.Entry(self.new_window, textvariable=self.app_data['thickness_variables'][index]))
+            materials = ("ASA", "PEEK", "PLA", "ABS", "Ultem 1010", "Ultem 9085", "Nylon 12", "Zytel", "PC-ABS")
+            self.app_data['materials'].append(
+                tk.OptionMenu(self.new_window, self.app_data['drop_down_variables'][index], *materials))
+            self.app_data['quantities'].append(
+                tk.Entry(self.new_window, textvariable=self.app_data['quantities_variables'][index]))
             self.copy_parameter = tk.Button(self.new_window, text="Copy Parameters",
-                                            command=lambda x=index: copy_parameters(x))
+                                            command=lambda x=index: self.copy_parameters(x))
 
             self.name.grid(column=0, row=index + 1, sticky=tk.W)
-            self.materials[index].grid(column=1, row=index + 1)
-            self.infills[index].grid(column=2, row=index + 1)
-            self.thicknesses[index].grid(column=3, row=index + 1)
-            self.quantities[index].grid(column=4, row=index + 1)
+            self.app_data['materials'][index].grid(column=1, row=index + 1)
+            self.app_data['infills'][index].grid(column=2, row=index + 1)
+            self.app_data['thicknesses'][index].grid(column=3, row=index + 1)
+            self.app_data['quantities'][index].grid(column=4, row=index + 1)
             self.copy_parameter.grid(column=5, row=index + 1, padx=5, pady=2)
 
-        self.create_report_button = tk.Button(self.root, text="GO", bg="green", fg="white",
-                                              font='Helvetica 18 bold')
+        self.create_report_button = tk.Button(self.root, text="GO", bg="green", fg="white", font='Helvetica 18 bold')
         self.create_report_button.bind("<Button-1>", self.report_window)
         self.create_report_button.grid(row=2, column=2, padx=5, pady=2)
 
-        def copy_parameters(index):
-            self.new_window.forget()
-            selected_material = self.drop_down_variables[index].get()
-            selected_infill = self.infill_variables[index].get()
-            selected_thickness = self.thickness_variables[index].get()
-            selected_quantity = self.quantities_variables[index].get()
+    def copy_parameters(self, index):
+        self.new_window.forget()
+        selected_material = self.app_data['drop_down_variables'][index].get()
+        selected_infill = self.app_data['infill_variables'][index].get()
+        selected_thickness = self.app_data['thickness_variables'][index].get()
+        selected_quantity = self.app_data['quantities_variables'][index].get()
 
-            for i in range(0, len(self.file_names)):
-                self.drop_down_variables[i].set(selected_material)
-                self.infill_variables[i].set(selected_infill)
-                self.thickness_variables[i].set(selected_thickness)
-                self.quantities_variables[i].set(selected_quantity)
-
+        for i in range(0, len(self.file_names)):
+            self.app_data['drop_down_variables'][i].set(selected_material)
+            self.app_data['infill_variables'][i].set(selected_infill)
+            self.app_data['thickness_variables'][i].set(selected_thickness)
+            self.app_data['quantities_variables'][i].set(selected_quantity)
 
     def refresh(self, frame):
         """ This function will assign all of the vars for GUI elements to empty lists, effectively clearing them """
         self.canvas.grid_forget()
         self.canvas.destroy()
         self.new_window = tk.Canvas(self.frame, bg="white")
-        self.names = []
-        self.infills = []
-        self.infill_variables = []
-        self.materials = []
-        self.material_variables = []
-        self.thicknesses = []
-        self.thickness_variables = []
-        self.quantities = []
-        self.quantities_variables = []
-        self.file_names = []
-        self.drop_down_variables = []
-
-        self.requests = []
+        self.set_app_dict()
+        self.set_query_dict()
 
     def AuxscrollFunction(self, g):
         """ If the window is larger than a hard coded size, scrolling will be enabled """

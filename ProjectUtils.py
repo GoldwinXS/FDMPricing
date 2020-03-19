@@ -2,33 +2,37 @@ import stl
 import rectpack
 from stl import mesh
 import pandas as pd
+import numpy as np
 from tkinter import Canvas
+
+max_prints = 100
+number_of_printers = 1
 
 
 # a subclass of Canvas for dealing with resizing of windows
 class ResizingCanvas(Canvas):
-    def __init__(self,parent,**kwargs):
-        Canvas.__init__(self,parent,**kwargs)
+    def __init__(self, parent, **kwargs):
+        Canvas.__init__(self, parent, **kwargs)
         self.bind("<Configure>", self.on_resize)
         self.height = self.winfo_reqheight()
         self.width = self.winfo_reqwidth()
 
-    def on_resize(self,event):
+    def on_resize(self, event):
         # determine the ratio of old width/height to new width/height
-        wscale = float(event.width)/self.width
-        hscale = float(event.height)/self.height
+        wscale = float(event.width) / self.width
+        hscale = float(event.height) / self.height
         self.width = event.width
         self.height = event.height
         # resize the canvas
         self.config(width=self.width, height=self.height)
         # rescale all the objects tagged with the "all" tag
-        self.scale("all",0,0,wscale,hscale)
+        self.scale("all", 0, 0, wscale, hscale)
 
-def hollow_estimate(stl_path, thickness, infill):
+
+def hollow_estimate(mesh_obj, thickness, infill):
     """ Given a path, and desired thickness/infill, this will estimate the hollowed volume of the mesh """
-    file_mesh = mesh.Mesh.from_file(stl_path) # load mesh
-    volume, cog, inertia = file_mesh.get_mass_properties() # get info
-    surface = file_mesh.areas.sum() # get surface area
+    volume, cog, inertia = mesh_obj.get_mass_properties()  # get info
+    surface = mesh_obj.areas.sum()  # get surface area
 
     wall_volume_after_hollow = float(surface) * float(thickness)
     empty_space_after_hollow = volume - wall_volume_after_hollow
@@ -36,32 +40,21 @@ def hollow_estimate(stl_path, thickness, infill):
 
     hollowed_volume = wall_volume_after_hollow + infill_amount
 
-    if empty_space_after_hollow < 0 or hollowed_volume>volume:
+    if empty_space_after_hollow < 0 or hollowed_volume > volume:
         hollowed_volume = volume
 
     return hollowed_volume
 
 
-def find_mins_maxs(path):
-    minx = maxx = miny = maxy = minz = maxz = None
-    obj = mesh.Mesh.from_file(path)
+def find_mins_maxs(mesh_obj):
+    """"""
 
-    for p in obj.points:
-        # p contains (x, y, z)
-        if minx is None:
-            minx = p[stl.Dimension.X]
-            maxx = p[stl.Dimension.X]
-            miny = p[stl.Dimension.Y]
-            maxy = p[stl.Dimension.Y]
-            minz = p[stl.Dimension.Z]
-            maxz = p[stl.Dimension.Z]
-        else:
-            maxx = max(p[stl.Dimension.X], maxx)
-            minx = min(p[stl.Dimension.X], minx)
-            maxy = max(p[stl.Dimension.Y], maxy)
-            miny = min(p[stl.Dimension.Y], miny)
-            maxz = max(p[stl.Dimension.Z], maxz)
-            minz = min(p[stl.Dimension.Z], minz)
+    maxx = mesh_obj.x.max()
+    minx = mesh_obj.x.min()
+    maxy = mesh_obj.y.max()
+    miny = mesh_obj.y.min()
+    maxz = mesh_obj.z.max()
+    minz = mesh_obj.z.min()
 
     boundingx = maxx - minx
     boundingy = maxy - miny
@@ -70,128 +63,123 @@ def find_mins_maxs(path):
     return boundingx, boundingy, boundingz
 
 
-
-
 # LISTS WILL BE IN THE FORM [['paths'], ['quantities'], ['material'], ['infills'], ['thicknesses']]
 
 machine_dimensions = 170.7165
 
 
-def manager(list_of_lists):
-    rectangles = []
-    # answer = []
-    printer_dims = [(machine_dimensions, machine_dimensions), (machine_dimensions, machine_dimensions)]
-    infill_average = 0
-    infill_sum = 0
+def convert_stringlist_to_intlist(sting_list):
+    """ converts a list of strings to a list of ints"""
+    assert len(sting_list) > 0, "Nothing in list to convert!"
+    return list(map(int, sting_list))
 
-    req = list_of_lists  # list_of_lists
-    for number_of_parts in range(0, len(req[0])):
+def get_used_build_areas(packer):
+    """simple function to return the number of builds actually used for a packer object"""
+    for i in range(len(packer)):
+        try:
+            l = packer[i]
+        except IndexError:
+            return i
+    return len(packer)
 
-        for quantity_numbers in range(0, int(req[1][number_of_parts])):
-            # get xyz of parts
-            dims = find_mins_maxs(req[0][number_of_parts])
+def pack_parts(query_df, printer_dims):
+    """ will determine how many builds are required for each part"""
+    heights = []
+    packer = rectpack.newPacker()
+    for mesh_obj, qty in zip(query_df['mesh'], query_df['quantities_variables']):
+        n_range = range(int(qty))
+        dims = [find_mins_maxs(mesh_obj) for x in n_range]
+        xs, ys, zs = [dims[x][0] for x in n_range], [dims[x][1] for x in n_range], [dims[x][2] for x in n_range]
+        heights = zs
+        for x, y in zip(xs, ys):
+            packer.add_rect(x, y)
 
-            # find optimal orientation of part. For now it's just the largest dimension. Spit out height and x_y dimensions
-            height = max(dims)  # RIGHT HERE is where the orientator functions would take over
-            temp = list(dims)
-            temp.remove(height)
-            temp = list(temp)
-            x, y = temp[0], temp[1]
-            infill_sum += int(req[3][number_of_parts])
+    for printer_dim in printer_dims:
+        packer.add_bin(printer_dim[0], printer_dim[1])
 
-            rectangles.append([x, y, req[0][number_of_parts], req[4][number_of_parts],
-                               req[3][number_of_parts]])  # [x, y, file_path, thickness, infill]
+    packer.pack()
 
-    infill_average = infill_sum / len(rectangles)
-
-    # print(len(rectangles))
-
-    def number_of_builds(list_of_rectangles):
-        # print(list_of_rectangles)
-        builds = []
-        packer = rectpack.newPacker()
-        ans = 0
-        temp = []
-        temp_count = 0
-        max_dims, max_heights = [], []
-        for b in range(0, 2):
-            packer.add_bin(*printer_dims[b])
-            # print(printer_dims[b])
-        max_x, max_y = 0, 0
-
-        for i in range(0, len(list_of_rectangles)):
-            temp.append(list_of_rectangles[i])
-            packer.add_rect(list_of_rectangles[i][0], list_of_rectangles[i][1])
-            packer.pack()
+    return packer, heights
 
 
-
-            temp_count += 1
-            if len(packer) > 1:
-                ans += 1
-
-                volume = 0
-                hollow_volume = 0
-
-                max_heights.append([height])
-
-                for j in range(0, temp_count):
-                    hollow_volume += hollow_estimate(temp[j][2], temp[j][3], temp[j][4])
-                    volume += mesh.Mesh.from_file(temp[j][2]).get_mass_properties()[0]
-                    # print(volume)
-
-                builds.append([req[2][0], volume, hollow_volume, height, infill_average])
-                # material, volume, hollow_volume, height, temp[temp_count][3], temp[temp_count][4]
-                temp.clear()
-                temp_count = 0
-
-                packer = rectpack.newPacker()
-                for b in range(0, 2):
-                    packer.add_bin(*printer_dims[b])
-
-        if len(packer) == 1:
-            volume = 0
-            hollow_volume = 0
-            for j in range(0, len(temp)):
-                hollow_volume += hollow_estimate(temp[j][2], temp[j][3], temp[j][4])
-                volume += mesh.Mesh.from_file(temp[j][2]).get_mass_properties()[0]
-
-            builds.append([req[2][0], volume, hollow_volume, height, infill_average])
-
-        ans += 1
-
-        return builds
-
-    a = number_of_builds(rectangles)
-
-    return a
+def calc_build_info(query_dict):
+    """ will determine how many builds are required for each material and part """
+    # TODO: load machine dimensions from file...
+    printer_dims = [(machine_dimensions, machine_dimensions)] * max_prints
+    df = pd.DataFrame(query_dict)
+    # packed_parts,heights = pack_parts(df,printer_dims)
 
 
-def price_combiner(list_of_builds):
-    total_mat_price = 0
-    volume = 0
+    builds = {"material": [],
+              "volume": [],
+              "hollowvolume_ci": [],
+              "height": [],
+              "infill": []}
 
-    for i in range(0, len(list_of_builds)):
-        total_mat_price += mult_estimator(*list_of_builds[i])
-        volume += list_of_builds[i][1]
+    # for each unique material:
+    for material in df['material'].unique():
+        parts_in_material = df[df['material'] == material]
 
-    return (list_of_builds[0][0], total_mat_price, volume)
-
-
-def material_prices(list_of_lists):
-    final_list = []
-
-    for i in range(0, len(list_of_lists)):
-        a = manager(list_of_lists[i])
-        b = price_combiner(a)
-        final_list.append(b)
-    return final_list
+        packed_parts, height = pack_parts(parts_in_material, printer_dims)
+        # n_builds = get_used_build_areas(packed_parts)/number_of_printers
 
 
-def time_estimate(infill,volume,height):
+        part_volumes = np.array([v.get_mass_properties()[0] for v in parts_in_material['mesh'].values.tolist()])
+        part_quantities = np.array([int(qty) for qty in parts_in_material['quantities_variables']])
+        hollowed_volumes = np.array([hollow_estimate(m,t,i) for m,t,i in zip(parts_in_material['mesh'].values.tolist(),
+                                                                             parts_in_material['thicknesses'].values.tolist(),
+                                                                             parts_in_material['infills'].values.tolist())])
+
+        total_volume = sum(part_volumes*part_quantities)
+
+        infills_total = (np.array(convert_stringlist_to_intlist(parts_in_material['infills']))
+                         * np.array(convert_stringlist_to_intlist(parts_in_material['quantities_variables']))).sum()
+        infill_average = infills_total / len(packed_parts.rect_list())
+        infill = infill_average*total_volume
+
+        builds['material'].append(material)
+        builds['volume'].append(total_volume)
+        builds['hollowvolume_ci'].append(hollowed_volumes.sum())
+        builds['height'].append(max(height))
+        builds['infill'].append(infill)
+
+
+    return builds
+
+
+def calc_build_material_costs(builds_dict):
+    df = pd.DataFrame(builds_dict)
+
+    build_result_dict = {'material':[],
+                         'total_price':[],
+                         'total_volume':[]}
+
+    for i,build in df.iterrows():
+        print(build)
+        total_mat_price = mult_estimator(material=build['material'],
+                                         volume=build['volume'],
+                                         hollowvolume_ci=build['hollowvolume_ci'],
+                                         height=build['height'],
+                                         infill=build['infill'])
+
+        total_vol = build['volume']-build['hollowvolume_ci']+build['infill']
+        build_result_dict['material'].append(build['material'])
+        build_result_dict['total_price'].append(total_mat_price)
+        build_result_dict['total_volume'].append(total_vol)
+
+    return build_result_dict
+
+
+def material_prices(query_dict):
+    # for key,item in query_dict.items():
+    builds = calc_build_info(query_dict)
+    return calc_build_material_costs(builds)
+
+
+def time_estimate(infill, volume, height):
     infill = int(infill)
 
-        #   NOTE: EXPERIMENTATION MUST BE DONE TO FIND GOOD VALUES   #
+    #   NOTE: EXPERIMENTATION MUST BE DONE TO FIND GOOD VALUES   #
 
     intermittent_factor = 16.39505801
 
@@ -201,53 +189,34 @@ def time_estimate(infill,volume,height):
     coeff_D = 2549.326795
     coeff_E = 16.39505801
 
-    answer_sec = coeff_A+(coeff_B*volume)+(coeff_C*height)+(coeff_D*(infill/100)*volume)+coeff_E*height*intermittent_factor
+    answer_sec = coeff_A + (coeff_B * volume) + (coeff_C * height) + (
+            coeff_D * (infill / 100) * volume) + coeff_E * height * intermittent_factor
 
-    answer_hrs = (answer_sec/60)/60
-
+    answer_hrs = (answer_sec / 60) / 60
 
     return answer_hrs
-
 
 
 material_data = pd.read_csv("matData.csv")
 printer_data = pd.read_csv("printerData.csv")
 
-class Material:
-    def __init__(self, name, price, density):
-        self.name = name
-        self.price = price
-        self.density = density
 
-
-materials = []
-
-material_name = []
-prices = []
-densities = []
-prep_time = []
-
-for i in range(0, material_data.shape[0]):
-    # materials.append(Material(matdata.iloc[i, 0], matdata.iloc[i, 1], matdata.iloc[i, 2]))
-    material_name.append(material_data.iloc[i, 0])
-    prices.append(material_data.iloc[i, 1])
-    densities.append(material_data.iloc[i, 2])
-    prep_time.append(material_data.iloc[i, 3])
+def get_material_data_from_df(material_name, key):
+    """ a function that simply retrieves information for a given material """
+    return material_data[material_data['name'] == material_name][key].values[0]
 
 
 def mult_estimator(material, volume, hollowvolume_ci, height, infill):
-
     print_time = time_estimate(infill, volume, height)
 
-    index = material_name.index(material)
-
-    material_density = densities[index]
-    material_cost = prices[index]
+    material_density = get_material_data_from_df(material, 'g/cc')
+    material_cost = get_material_data_from_df(material, '$/gk')
+    material_prep_time = get_material_data_from_df(material, 'preptime')
 
     energy_cost = (printer_data.iloc[0, 3] * printer_data.iloc[0, 4]) / 1000
 
     amortizement_hourly = printer_data.iloc[0, 7] * 52
-    amortizement_cost = (0.33 * printer_data.iloc[0, 5] + prep_time[index]) / amortizement_hourly
+    amortizement_cost = (0.33 * printer_data.iloc[0, 5] + material_prep_time) / amortizement_hourly
 
     other_costs = printer_data.iloc[0, 0] / amortizement_hourly
 
