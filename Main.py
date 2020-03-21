@@ -1,6 +1,6 @@
 import tkinter as tk
 import os
-from ProjectUtils import hollow_estimate, material_prices
+from ProjectUtils import hollow_estimate, material_prices, find_mins_maxs
 import pandas as pd
 
 
@@ -31,7 +31,7 @@ class App:
     def set_query_dict(self):
         """ simple function to reset the query dict which contains all of the needed info for part pricing"""
         self.query_dict = {"mesh": [],
-                           "path":[],
+                           "path": [],
                            "quantities_variables": [],
                            "drop_down_variables": [],
                            "infills": [],
@@ -61,19 +61,32 @@ class App:
         build_df = pd.DataFrame(build_dict)
         n_parts = query_df.shape[0]
 
-        query_df['part_unit_price'] = [0]*n_parts
+        query_df['part_unit_price'] = [0] * n_parts
+        # query_df['part_dims'] = query_df['mesh'].apply(lambda x: find_mins_maxs(x)) # get the mesh rects for all parts
 
-        for material in query_df['material']:
-            parts_in_mat_df = query_df[query_df['material']==material]
-            build_mat_df = build_df[build_df['material']==material]
+        for material in query_df['material'].unique():
+            parts_in_mat_df = query_df[query_df['material'] == material] # extract only parts in that material for the query df
+            build_mat_df = build_df[build_df['material'] == material] # extract relevant build info from the builds df
 
-            parts_in_mat_df['part_unit_vol'] = [hollow_estimate(m,t,i) for m,t,i in zip(parts_in_mat_df['mesh'],parts_in_mat_df['thicknesses'],parts_in_mat_df['infills'])]
-            total_vol = sum(parts_in_mat_df['part_unit_vol']*list(map(int,parts_in_mat_df['quantities_variables'])))
-            parts_in_mat_df['part_contrib_to_total_vol'] = [(part_vol*qty)/total_vol for part_vol,qty in zip(parts_in_mat_df['part_unit_vol'],list(map(int,parts_in_mat_df['quantities_variables'])))]
-            query_df['part_unit_price'] = parts_in_mat_df['part_contrib_to_total_vol']*build_mat_df['total_price'].values
+            # get the volume of the part given the relevant factors "thickness" and "infill" between 0 and 100
+            parts_in_mat_df['part_total_vol'] = [hollow_estimate(m, t, i)
+                                                for m, t, i in
+                                                zip(parts_in_mat_df['mesh'], parts_in_mat_df['thicknesses'],
+                                                    parts_in_mat_df['infills'])]
 
-        return {x:str(round(price,2)) for x in range(n_parts) for price in query_df['part_unit_price']}
+            # calculate the total volume of all builds
+            total_vol = sum(parts_in_mat_df['part_unit_vol'] * list(map(int, parts_in_mat_df['quantities_variables'])))
 
+            # given the volume of each part, calculate the contribution of that part towards the final price
+            parts_in_mat_df['part_contrib_to_total_vol'] = [(part_vol * qty) / total_vol for part_vol, qty in
+                                                            zip(parts_in_mat_df['part_total_vol'], list(
+                                                                map(int, parts_in_mat_df['quantities_variables'])))]
+            query_df.loc[query_df['material'] == material, 'part_total_price'] = parts_in_mat_df[
+                                                                                    'part_contrib_to_total_vol'] * \
+                                                                                build_mat_df['total_price'].values
+
+
+        return {x: str(round(price, 2)) for x, price in zip(range(n_parts), query_df['part_unit_price'])}
 
     def convert_to_list(self, query_dict):
         df = pd.DataFrame(query_dict)
@@ -92,7 +105,8 @@ class App:
         labels = []
         copy_buttons = []
 
-        self.label_text = ["Name", "Material", "Quantity", "Unit Price"]
+        self.label_text = ["Name", "Material", "Quantity", "Unit Price","Total Price"]
+
 
         for j in range(0, len(self.label_text)):
             labels.append(tk.Label(report_window, text=self.label_text[j], font='Helvetica 18 bold', bg="white"))
@@ -112,7 +126,7 @@ class App:
             quantity.grid(column=2, row=i + 1)
 
             mesh_obj = mesh.Mesh.from_file(self.path_field.get() + "/" + file)
-            mesh_obj.points = mesh_obj.points/100 # convert to inches?
+            mesh_obj.points = mesh_obj.points / 100  # convert to inches?
             self.query_dict['mesh'].append(mesh_obj)
             self.query_dict['quantities_variables'].append(self.app_data['quantities_variables'][i].get())
             self.query_dict['drop_down_variables'].append(self.app_data['drop_down_variables'][i].get())
@@ -144,7 +158,7 @@ class App:
     def create_window(self, g):
 
         """
-        This funciton creates a new tkinter window which will allow the user to specify what parameters they would like for a given part
+        This function creates a new tkinter window which will allow the user to specify what parameters they would like for a given part
         The argument "g" is to work around a bug in tkinter
         """
 

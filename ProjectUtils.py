@@ -30,7 +30,12 @@ class ResizingCanvas(Canvas):
 
 
 def hollow_estimate(mesh_obj, thickness, infill):
-    """ Given a path, and desired thickness/infill, this will estimate the hollowed volume of the mesh """
+    """
+
+    Given a path, and desired thickness/infill, this will estimate the hollowed volume of the mesh
+    expects numbers in the range [0,100]
+
+    """
     volume, cog, inertia = mesh_obj.get_mass_properties()  # get info
     surface = mesh_obj.areas.sum()  # get surface area
 
