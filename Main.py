@@ -1,279 +1,284 @@
-import tkinter as tk
-import os
-from ProjectUtils import hollow_estimate, price_by_material, find_mins_maxs
-import pandas as pd
-from stl import mesh
-from copy import deepcopy
+from kivy.app import App
+from kivy.uix.label import Label
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.textinput import TextInput
+from kivy.uix.button import Button
+from kivy.uix.widget import Widget
+from kivy.uix.screenmanager import ScreenManager, Screen
+from kivy.graphics import Callback, Color, Rectangle
+from kivy.uix.slider import Slider
+from ProjectUtils import get_stl_files, MainAppScreen, PartAppScreen
+from kivy.uix.dropdown import DropDown
+import trimesh 
 
 
-class App:
-    first_use = True
+class QueryPage(MainAppScreen):
+    """
+    Class to describe the Main query page where the path is input by the user
 
-    def __init__(self):
+    this class inherits from MainAppScreen, which is a wrapper around kivy.uix.screenmanager.Screen
+    """
 
-        """ Main Application class """
-        self.set_app_dict()
+    def __init__(self, **kwargs):
+        super(QueryPage, self).__init__(**kwargs)
 
-        self.root = tk.Tk()
-        self.root.wm_title("FDM QUOTING SOFTWARE V 2.2.7")
-        self.root.iconbitmap("icon.ico")
+        # setup vars
+        self.parts = []
 
-        # Submit button
-        self.submit_button = tk.Button(self.root, text="Submit")
-        self.submit_button.bind("<Button-1>", self.create_selection_window)
-        self.submit_button.grid(row=0, column=0, sticky=tk.E + tk.W)
+        self.add_background()
+        # Define widgets
+        self.entry = TextInput(height=27, text='/Users/goldwin/PycharmProjects/FDM_APP_v2/')
+        self.label = Label(text='Enter a path to your .stl files here')
+        self.go_button = Button(text='GO!', height=25)
 
-        # Path Entry
-        self.path_field = tk.Entry(self.root)
-        self.path_field.grid(row=0, column=1, sticky=tk.E + tk.W + tk.N + tk.S)
+        # set dynamic canvas options
+        with self.canvas:
+            Callback(self.resize_widgets)
 
-        self.root.resizable(True, True)
-        # self.root.geometry('1000x500')
-        self.root.mainloop()
+        # Add widgets to self
+        self.add_widget(self.go_button)
+        self.add_widget(self.entry)
+        self.add_widget(self.label)
 
-    def set_app_dict(self):
-        """ will reset the app data dict, which has all of the GUI variables """
-        self.app_data = {
-            "names": [],
-            "infills": [],
-            "infill_variables": [],
-            "materials": [],
-            "thicknesses": [],
-            "thickness_variables": [],
-            "quantities": [],
-            "quantities_variables": [],
-            "mesh": [],
-            "part_dims": [],
-            "part_volume": [],
-            "part_surface_area": [],
-            "material_variables": [],
-            "drop_down_variables": []
+    def resize_widgets(self, instance):
+        """ General function to handle the resizing of widgets on this page """
+        self.size_x, self.size_y = self.get_screen_width_and_height()
+
+        # find center points for all widgets, adjusting for size
+        self.go_button_center = self.get_center_point_for_widget(self.go_button.width, self.go_button.height)
+        self.entry_center = self.get_center_point_for_widget(self.go_button.width, self.go_button.height)
+        self.label_center = self.get_center_point_for_widget(self.go_button.width, self.go_button.height)
+
+        # offset widgets
+        self.go_button.pos = self.offset_widget(self.go_button_center, (-0.2, 0))
+        self.entry.pos = self.offset_widget(self.entry_center, (0.19, 0))
+        self.label.pos = self.offset_widget(self.label_center, (0, -0.2))
+
+        # span entry bar
+        self.entry.width = self.go_button.pos[0] - self.entry.pos[0]
+
+
+class PartInfoPage(PartAppScreen):
+    """
+    Class to describe the Main query page where the path is input by the user
+
+    this class inherits from MainAppScreen, which is a wrapper around kivy.uix.screenmanager.Screen
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.parts = {}
+
+        self.add_background()  # add background
+
+        self.back_button = Button(text='go back', size=self.center, pos=(400, 400))
+
+        # Any changes to this list must be reflected in self.update_grid
+        self.column_labels = ['Part Name',
+                              'Material',
+                              'Print vol',
+                              'Part Thickness',
+                              'Infill Amt',
+                              'Print Time',
+                              'Final Cost']
+
+        # TODO load materials from options
+        self.materials = {
+            'ASA': {
+                'price': 30,
+                'density': 1.5},
+            'PLA': {
+                'price': 30,
+                'density': 1
+            },
+            'ULTEM': {
+                'price': 530,
+                'density': 1
+            }
         }
 
-    def price_sorter(self, build_dict, query_df):
-        """ this function converts the build requirements per material to price per part"""
-        build_df = pd.DataFrame(build_dict)
-        n_parts = query_df.shape[0]
+        # self.reset_all()
 
-        query_df['part_unit_price'] = [0] * n_parts
-        # query_df['part_dims'] = query_df['mesh'].apply(lambda x: find_mins_maxs(x)) # get the mesh rects for all parts
+        with self.canvas:
+            print('updating totals')
+            # if len(self.parts) > 0:
+            Callback(self.update_totals)
 
-        for material in query_df['materials'].unique():
-            parts_in_mat_df = query_df[
-                query_df['materials'] == material]  # extract only parts in that material for the query df
-            build_mat_df = build_df[build_df['material'] == material]  # extract relevant build info from the builds df
+    def update_grid(self):
+        """ Updates the grid and populate with parts """
+        # if not isinstance(self.parts, type(None)):
+        self.part_grid.rows += len(self.parts)
+        for i in range(len(self.parts['path'])):
+            # Create entry fields
+            self.thickness_entry.append(TextInput(text='0', padding=3, halign='center'))
+            self.infill_entry.append(TextInput(text='0', padding=3, halign='center'))
 
-            # get the volume of the part given the relevant factors "thickness" and "infill" between 0 and 100
-            parts_in_mat_df['part_total_vol'] = [hollow_estimate(v, s, t, i)
-                                                 for v, s, t, i in
-                                                 zip(parts_in_mat_df['part_volume'],
-                                                     parts_in_mat_df['part_surface_area'],
-                                                     parts_in_mat_df['thicknesses'],
-                                                     parts_in_mat_df['infills'])]
+            # Prepare vars
+            bbox_dim = self.parts['bbox'][i]
+            # bbox_dim = '(' + ' x '.join([str(round(dim, 2)) for dim in bbox_dim]) + ') cm'
 
-            # calculate the total volume of all builds
-            total_vol = sum(parts_in_mat_df['part_total_vol'] * list(map(int, parts_in_mat_df['quantities_variables'])))
+            # Determine the parts hollowed volume
+            hollow_volume = self.hollow_estimate(self.parts['volume'][i],
+                                                 self.parts['surface'][i],
+                                                 float(self.thickness_entry[i].text),
+                                                 float(self.infill_entry[i].text))
 
-            # given the volume of each part, calculate the contribution of that part towards the final price
-            parts_in_mat_df['part_contrib_to_total_vol'] = [(part_vol * qty) / total_vol for part_vol, qty in
-                                                            zip(parts_in_mat_df['part_total_vol'], list(
-                                                                map(int, parts_in_mat_df['quantities_variables'])))]
-            query_df.loc[query_df['material'] == material, 'part_total_price'] = parts_in_mat_df[
-                                                                                     'part_contrib_to_total_vol'] * \
-                                                                                 build_mat_df['total_price'].values
+            # Calculate an estimated build time
+            # TODO: add a better way of orienting the parts instead of just picking the first dimension
+            print_time = self.time_estimate(float(self.infill_entry[i].text),
+                                            float(self.thickness_entry[i].text),
+                                            self.parts['bbox'][i][0])
 
-        return {x: str(round(price, 2)) for x, price in zip(range(n_parts), query_df['part_unit_price'])}
+            # Determine the final price
+            final_price = self.simple_price_estimator(self.parts['volume'][i], hollow_volume,
+                                                      self.parts['bbox'][i][0], float(self.infill_entry[i].text))
 
-    def report_window(self, g):
-        from stl import mesh
+            # Create widgets
+            file_name = Label(text=self.parts['file_name'][i])
+            # bbox_dims = Label(text=bbox_dim, font_size=15)
+            materials = self.create_material_dropdown()
+            hollow_vol = Label(text=str(round(hollow_volume, 2)))
+            print_times = Label(text=str(round(print_time * 60)) + ' min')
+            final_price = Label(text='$' + str(round(final_price, 2)))
 
-        report_window = tk.Toplevel(self.root, bg="white")
+            # save now so we can modify later
+            self.final_prices.append(final_price)
+            self.hollow_volumes.append(hollow_vol)
+            self.print_times.append(print_times)
 
-        report_window.iconbitmap("icon.ico")
-        report_window.wm_title("REPORT WINDOW")
+            # Add widgets
+            self.part_grid.add_widget(file_name)
+            self.part_grid.add_widget(materials)
+            # self.part_grid.add_widget(bbox_dims)
+            self.part_grid.add_widget(hollow_vol)
+            self.part_grid.add_widget(self.thickness_entry[i])
+            self.part_grid.add_widget(self.infill_entry[i])
+            self.part_grid.add_widget(print_times)
+            self.part_grid.add_widget(final_price)
 
-        self.label_text = ["Name", "Material", "Quantity", "Unit Price", "Total Price"]
+    # def update_dropdown(self,mainbutton,text):
 
-        get_varflt = lambda df_col: [float(var.get()) for var in df_col]
-        get_var = lambda df_col: [var.get() for var in df_col]
+    def create_material_dropdown(self):
+        dropdown = DropDown()
+        main_button = Button(text='Select Material', height=30, halign='center', )
 
-        # self.app_df['infills'] = get_var(self.app_df['infill_variables'])
-        # self.app_df['infills'] = get_var(self.app_df['infill_variables'])
+        for mat in self.materials.keys():
+            btn = Button(text=mat, height=20, size_hint_y=None, halign='center', )
+            # display the value of the text if selected
+            btn.bind(on_select=lambda x: dropdown.select(x.text))
+            # btn.bind(on_release=lambda main_button.text=)
+            dropdown.add_widget(btn)
 
-        self.app_data['infills']=get_varflt(self.app_data['infill_variables'])
-        self.app_data['materials']=get_var(self.app_data['drop_down_variables'])
-        self.app_data['thicknesses']=get_varflt(self.app_data['thickness_variables'])
-        self.app_data['quantities']=get_varflt(self.app_data['quantities_variables'])
+        main_button.halign = 'center'
+        main_button.bind(on_release=dropdown.open)
+        dropdown.bind(on_select=lambda instance, x: setattr(main_button, 'text', x))
 
-        self.app_df = pd.DataFrame(self.app_data)
-        query_df = self.app_df[
-            ['names', 'quantities_variables', 'drop_down_variables', 'infills', 'thicknesses', 'materials',
-             'part_volume', 'part_dims', 'part_volume', 'part_surface_area']]
-        price_info = price_by_material(query_df)
-        final_total_prices = self.price_sorter(price_info, query_df)
-        final_unit_prices = {num: str(float(unit_price) / list(map(int, query_df['quantities_variables']))[num])
-                             for num, unit_price in final_total_prices.items()}
-        self.app_data["copy_buttons"] = [tk.StringVar(self.root) for p in final_total_prices.items()]
+        return main_button
 
-        # for each file, make a report window with the relevant information
-        for i in range(len(self.file_names)):
-            total_price = tk.Label(report_window, text=final_total_prices[i], bg="white")
-            total_price.grid(column=len(final_total_prices) + 1, row=i + 1)
+    def update_totals(self, instance):
+        for i in range(len(self.final_prices)):
+            # Calculate an estimated build time
+            # TODO: add a better way of orienting the parts instead of just picking the first dimension
 
-            unit_price = tk.Label(report_window, text=final_unit_prices[i], bg="white")
-            unit_price.grid(column=len(final_total_prices) + 1, row=i + 1)
+            if len(self.thickness_entry[i].text) < 1:
+                self.final_prices[i].text = '0'
+            if len(self.thickness_entry[i].text) < 1:
+                self.final_prices[i].text = '0'
 
-            # copy_buttons.append(tk.StringVar(self.root))
+            print_time = self.time_estimate(float(self.infill_entry[i].text),
+                                            float(self.thickness_entry[i].text),
+                                            self.parts['bbox'][i][0])
 
-        # def clipboard(index):
-        #     """ Simple function to copy text to the clipboard for easy reuse """
-        #     clip = tk.Tk()
-        #     clip.clipboard_clear()
-        #     clip.clipboard_append(copy_buttons[index])
-        #     clip.destroy()
+            hollow_volume = self.hollow_estimate(self.parts['volume'][i],
+                                                 self.parts['surface'][i],
+                                                 float(self.thickness_entry[i].text),
+                                                 float(self.infill_entry[i].text))
 
-    def create_selection_window(self, g):
+            new_price = self.simple_price_estimator(self.parts['volume'][i],
+                                                    hollow_volume,
+                                                    self.parts['bbox'][i][0],
+                                                    float(self.infill_entry[i].text))
 
+            self.hollow_volumes[i].text = str(round(hollow_volume, 2)) + 'cc'
+            self.final_prices[i].text = str(round(new_price, 2)) + '$'
+            self.print_times[i].text = str(round(print_time * 60)) + ' min'
+
+    def reset_all(self):
+        """ reset all of the widgets on the page and redraw essentials """
+
+        # Var setup
+        self.cols = 1
+        self.rows = 3  # Main structure is a grid with 3 rows
+
+        # self.part_grid = GridLayout(pos=(0, 0), size=(500, 500))
+        self.row_default_height = 50
+        self.row_force_default = True
+
+        self.clear_widgets()
+
+        self.part_grid = GridLayout(rows=1, cols=len(self.column_labels), row_default_height=35)  # reset part grid
+        self.part_grid.cols = len(self.column_labels)  # set correct num of columns
+        [self.part_grid.add_widget(Label(text=label)) for label in self.column_labels]  # add column labels
+
+        # setup vars
+        self.thickness_entry = []
+        self.infill_entry = []
+        self.hollow_volumes = []
+        self.final_prices = []
+        self.print_times = []
+
+        self.update_grid()
+
+        self.add_widget(self.back_button)
+        self.add_widget(self.part_grid)
+
+
+class FDMApp(App):
+    """
+    Builds all of the app screens into a single application
+    """
+
+    def build(self):
+        """ Main setup for the application happens here """
+        self.screen_manager = ScreenManager()
+
+        # Load pages
+        self.query_page = QueryPage()
+        self.part_info_page = PartInfoPage()
+
+        # connect pages
+        self.query_page.go_button.bind(on_press=self.go_to_part_page)
+        self.part_info_page.back_button.bind(on_press=self.go_back_to_start)
+
+        # Add pages to screen manager
+        self.add_screen(self.query_page, 'start')
+        self.add_screen(self.part_info_page, 'part-info')
+
+        return self.screen_manager
+
+    def go_to_part_page(self, instance):
+        """ Go to the part page with all of the part information """
+        self.part_info_page.parts = get_stl_files(self.query_page.entry.text)
+        self.part_info_page.reset_all()
+        self.screen_manager.current = 'part-info'
+
+    def go_back_to_start(self, instance):
+        """ Go to the beginning user input area"""
+        self.part_info_page.reset_all()
+        self.screen_manager.current = 'start'
+        self.part_info_page.back_button.bind(on_press=self.go_back_to_start)
+
+    def add_screen(self, page, name):
         """
-        This function creates a new tkinter window which will allow the user to specify what parameters they would like for a given part
-        The argument "g" is to work around a bug in tkinter
+
+        Args:
+            name: (str): name for the window for later reference
+            page (kivy.uix.ScreenManager.Screen): a kivy screen object
         """
-
-        # self.name_labels = []
-
-        # if not self.first_use:
-        #     self.refresh(self.frame)
-        #
-        # else:
-        self.frame = tk.Frame(self.root, bg="white")
-        self.frame.grid(row=1, column=1)
-
-        self.canvas = tk.Canvas(self.frame, bg="white", width=600)
-        self.canvas.grid(rowspan=2, columnspan=2)
-
-        self.new_window = tk.Frame(self.canvas, bg="white")
-        self.scroll_bar = tk.Scrollbar(self.root, orient="vertical", command=self.canvas.yview)
-        self.scroll_bar.grid(column=6, row=1, sticky="ns")
-        self.canvas.create_window((0, 0), window=self.new_window, anchor='nw')
-        self.canvas.grid()
-
-        path = self.path_field.get()
-        self.file_names = [file for file in os.listdir(path) if file.endswith('.stl')]
-
-        # self.new_window.bind("<Configure>", self.AuxscrollFunction)
-
-        label_text = ["Name", "Material", "Infill (%)", "Thickness (in)", "Quantity"]
-
-        # self.first_use = False
-
-        # self.scroll_bar.config(command=self.canvas.yview)
-        # self.canvas['yscrollcommand'] = self.scroll_bar.set
-
-        # get part info for everything that we can
-        self.app_data['mesh'] = [mesh.Mesh.from_file(self.path_field.get() + "/" + file) for file in self.file_names]
-        self.app_data['names'] = [file.rstrip('.stl') for file in self.file_names]
-        self.app_data['part_dims'] = [find_mins_maxs(m) for m in self.app_data['mesh']]
-        self.app_data['part_volume'] = [m.get_mass_properties()[0] for m in self.app_data['mesh']]
-        self.app_data['part_surface_area'] = [m.areas.sum() for m in self.app_data['mesh']]
-
-        # set up sting vars
-        string_vars = lambda: [tk.StringVar(self.root) for _ in range(len(self.file_names))]
-        self.app_data['name_labels'] = string_vars()
-        self.app_data['infill_variables'] = string_vars()
-        self.app_data['material_variables'] = string_vars()
-        self.app_data['thickness_variables'] = string_vars()
-        self.app_data['quantities_variables'] = string_vars()
-        self.app_data['drop_down_variables'] = string_vars()
-
-        materials = ("ASA", "PEEK", "PLA", "ABS", "Ultem 1010", "Ultem 9085", "Nylon 12", "Zytel", "PC-ABS")
-
-        assign_pos = lambda col, tk_var_list, row_shift=1: [var.grid(column=col, row=i + row_shift) for i, var in
-                                                            enumerate(tk_var_list)]
-        entry_vars = lambda str_vars: [tk.Entry(self.new_window, text=var, width=5) for var in str_vars]
-        get_entry = lambda str_vars: [var.get() for var in str_vars]
-        copy_button_vars = lambda button_text, cpy_amt: [
-            tk.Button(self.new_window, text=button_text, command=lambda: self.copy_parameters(x)) for x in
-            range(cpy_amt)]
-        optionmenu_vars = lambda drop_down_vars: [tk.OptionMenu(self.new_window, var, *materials) for var in
-                                                  drop_down_vars]
-
-        # bind_to_mouse = lambda button_vars: [var.bind("<Button-1>", self.copy_parameters) for var in button_vars]
-        label_vars = lambda names: [tk.Label(self.new_window, text=name) for name in names]
-
-        # create tk objects for all buttons/fields/entries
-        assign_pos(0, label_vars(self.app_data['names']))
-        assign_pos(1, optionmenu_vars(self.app_data['drop_down_variables']))
-        assign_pos(2, entry_vars(self.app_data['infill_variables']))
-        assign_pos(3, entry_vars(self.app_data['thickness_variables']))
-        assign_pos(4, entry_vars(self.app_data['quantities_variables']))
-        assign_pos(5, copy_button_vars('copy', len(self.app_data['quantities_variables'])))
+        screen = Screen(name=name)
+        screen.add_widget(page)
+        self.screen_manager.add_widget(screen)
 
 
-        # retrieve values from stringvars
-        self.app_data['infills'] = get_entry(self.app_data['infill_variables'])
-        self.app_data['materials'] = get_entry(self.app_data['material_variables'])
-        self.app_data['thicknesses'] = get_entry(self.app_data['thickness_variables'])
-        self.app_data['quantities'] = get_entry(self.app_data['quantities_variables'])
-
-        for i in range(len(self.file_names)):
-            labels = []
-            for j in range(0, len(label_text)):
-                labels.append(tk.Label(self.new_window, text=label_text[j], font='Helvetica 18 bold', bg="white"))
-                labels[j].grid(column=j, row=0, padx=5, pady=5)
-
-            self.name = tk.Label(self.new_window, text=self.file_names[i].rstrip(".stl"), bg="white")
-            # self.name_labels.append(self.name)
-            self.new_window.update()
-
-        self.create_report_button = tk.Button(self.root, text="GO", bg="green", fg="white", font='Helvetica 18 bold')
-        self.create_report_button.bind("<Button-1>", self.report_window)
-        self.create_report_button.grid(row=2, column=2, padx=5, pady=2)
-        self.app_df = pd.DataFrame(self.app_data)
-
-    def copy_parameters(self, index):
-        self.new_window.forget()
-        selected_material = self.app_data['drop_down_variables'][index].get()
-        selected_infill = self.app_data['infill_variables'][index].get()
-        selected_thickness = self.app_data['thickness_variables'][index].get()
-        selected_quantity = self.app_data['quantities_variables'][index].get()
-
-        set_var = lambda x, var_list: [var.set(x) for var in var_list]
-        set_var(selected_material, self.app_data['drop_down_variables'])
-        set_var(selected_infill, self.app_data['infill_variables'])
-        set_var(selected_thickness, self.app_data['thickness_variables'])
-        set_var(selected_quantity, self.app_data['quantities_variables'])
-
-    def refresh(self, frame):
-        """ This function will assign all of the vars for GUI elements to empty lists, effectively clearing them """
-        self.canvas.grid_forget()
-        self.canvas.destroy()
-        self.new_window = tk.Canvas(self.frame, bg="white")
-        self.set_app_dict()
-        # self.set_query_dict()
-
-    def AuxscrollFunction(self, g):
-        """ If the window is larger than a hard coded size, scrolling will be enabled """
-
-        # NB: You need to set a max size for frameTwo. Otherwise, it will grow as needed, and scrollbar do not act
-        width = 0
-
-        # for i in range(0, len(self.name_labels)):
-        #     temp = self.name_labels[i].winfo_width()
-        #     if temp > width:
-        #         width = temp
-
-        width += 100 * 7
-
-        height = self.canvas.winfo_height() #self.name_labels[0].winfo_height() * len(self.file_names) + 100
-
-        if height > 850:
-            height = 850
-
-        if width > 1350:
-            width = 1400
-
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"), width=width,
-                              height=height)
-
-
-App()
+if __name__ == "__main__":
+    FDMApp().run()
