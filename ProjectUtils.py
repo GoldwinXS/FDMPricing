@@ -1,12 +1,12 @@
 import stl as mesh
 import pandas as pd
 import os
+import json
 from kivy.uix.screenmanager import Screen
 from kivy.uix.dropdown import DropDown
 from kivy.uix.widget import Widget
 from kivy.uix.gridlayout import GridLayout
 from kivy.graphics import Callback, Color, Rectangle
-
 
 class MainAppScreen(Widget):
     """ A wrapper class to eliminate some repetitive code and abstract utility functions """
@@ -21,7 +21,8 @@ class MainAppScreen(Widget):
 
         with self.canvas:
             # add background
-            Color(.234, .456, .678, .8)  # set the colour
+            options = load_json('options.json')
+            Color(*options['background'])  # set the colour
 
             # Setting the size and position of canvas
             self.rect = Rectangle(pos=self.center,
@@ -55,7 +56,7 @@ class MainAppScreen(Widget):
         NB: -ve values will shift left, +ve values will shift right
 
         Args:
-            offset: (tuple): defines the ratios of how much one wants to shift the widget
+            offset (tuple): defines the ratios of how much one wants to shift the widget
             c_pos (tuple): defines where the center of the widget would be if placed in the center of the screen
         """
         screen_w, screen_h = self.center_x * 2, self.center_y * 2
@@ -78,7 +79,9 @@ class PartAppScreen(GridLayout):
 
         with self.canvas:
             # add background
-            Color(.234, .456, .678, .8)  # set the colour
+            options = load_json('options.json')
+
+            Color(*options['background'])  # set the colour
 
             # Setting the size and position of canvas
             self.rect = Rectangle(pos=self.center, size=(self.width / 2., self.height / 2.))
@@ -181,3 +184,13 @@ def get_stl_files(path):
                 'bbox': bbox_dims}
     except:
         pass
+
+
+def load_json(fp):
+    with open(fp) as file:
+        return json.load(file)
+
+
+def save_json(fp, json_obj):
+    with open(fp, 'w') as file:
+        json.dump(json_obj, fp=file)
